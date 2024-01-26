@@ -46,7 +46,7 @@ def detectPOIs(query, train):
         pts = np.float32([ [0,0], [0,h-1], [w-1,h-1], [w-1,0] ]).reshape(-1,1,2)
         dst = cv.perspectiveTransform(pts,M)
         
-        resultimg = cv.polylines(train, [np.int32(dst)], True, 255, 3, cv.LINE_AA)
+        #resultimg = cv.polylines(train, [np.int32(dst)], True, 255, 3, cv.LINE_AA)
     else:
         print("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
         matchesMask = None
@@ -56,8 +56,8 @@ def detectPOIs(query, train):
                     matchesMask = matchesMask, # draw only inliers
                     flags = 2)
 
-    resultimg = cv.drawMatches(query,kpQ,train,kpT,good,None,**draw_params)
-    plt.imshow(resultimg, 'gray'),plt.show()
+    #resultimg = cv.drawMatches(query,kpQ,train,kpT,good,None,**draw_params)
+    #plt.imshow(resultimg, 'gray'),plt.show()
     return [np.int32(dst)]
 
 folderPath = "D:/Krita Recorder/20231218171411" # DEADLOCK
@@ -82,7 +82,8 @@ for file in fileList:
         flagFirst = False
         
     elif currentW != w or currentH != h:
-        filesInChange.append((previousFile, currentFile))
+        filesInChange.append(previousFile)
+        filePostChange = file
         changeList.append((w - currentW, h - currentH))
         
         print("Change detected!")
@@ -93,6 +94,8 @@ for file in fileList:
         currentH = h
         
     previousFile = file
+    
+filesInChange.append(filePostChange)
 
 print("SCAN COMPLETE")
 if (len(changeList) > 0):
@@ -106,15 +109,17 @@ else:
 
 # load relevant images in tuples
 loadedImgs = []
-for (file1, file2) in filesInChange:
-    loadedImgs.append((cv.imread(join(folderPath, file1)), cv.imread(join(folderPath, file2))))
+for file in filesInChange:
+    loadedImgs.append(cv.imread(join(folderPath, file)))
+    
+finalCrop = loadedImgs[-1] # last element
 
 # detect similarities in all relevant images and get cropping coordinates
 counter = 0
 coordForChanges =[]
 for change in changeList:
-    (trainImg, queryImg) = loadedImgs[counter]
-    dst = detectPOIs(queryImg, trainImg)
+    trainImg = loadedImgs[counter]
+    dst = detectPOIs(finalCrop, trainImg)
     
     coordinates = []
     for list in dst:
@@ -127,11 +132,50 @@ for change in changeList:
     
 # ASSUMPTIONS:
 # coordinates contains the points corresponding to the corners of the smaller image.
-# coordinates is set in the following order: [top-left, bottom-left, bottom-right, top-right]
+# coordinates are set in the following order: [top-left, bottom-left, bottom-right, top-right]
 # therefore, assuming there is no considerable perspective transformation:
 # coordinates[0] and [1] must have equal values of X, as must [2] and [3].
 # coordinates[1] and [2] must have equal values of Y, as must [0] and [3].
 # there might be slight differences due to rounding so that needs to be taken care of.
 # Proposition: in case of unequal values, take average and round to integer
 
-print(coordForChanges)
+correctedCoords = []
+for list in coordForChanges:
+    [(x0, y0), (x1, y1), (x2, y2), (x3, y3)] = list
+    
+    if x0 != x1:
+        avg = int((x0+x1)/2)
+        x0 = x1 = avg
+    if x2 != x3:
+        avg = int((x2+x3)/2)
+        x2 = x3 = avg
+        
+    if y1 != y2:
+        avg = int((y1+y2)/2)
+        y1 = y2 = avg
+    if y0 != y3:
+        avg = int((y0+y3)/2)
+        y0 = y3 = avg
+    
+    correctedCoords.append([(x0, y0), (x1, y1), (x2, y2), (x3, y3)])
+
+# cropping images
+counter = 0
+croppedImgs = []
+for list in correctedCoords:
+    img = loadedImgs[counter]
+    [(x0, y0), (x1, y1), (x2, y2), (x3, y3)] = list
+    
+    (x, y) = (x0, y0)
+    w = x3 - x0
+    h = y1 - y0
+    
+    croppedImgs.append(img[y:y+h, x:x+w])
+    plt.imshow(img[y:y+h, x:x+w], 'gray'),plt.show()
+    counter += 1
+    
+counter = 0
+for elem in croppedImgs:
+    if not cv.imwrite(r'C:\Users\pedro\Documents\Python Scripts\krita recorder image handler\cropped{}.jpg'.format(counter), elem):
+        raise Exception("Could not write image")
+    counter += 1
